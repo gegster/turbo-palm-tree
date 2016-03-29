@@ -37,6 +37,8 @@ public class Board : MonoBehaviour
 
 		mGridExtents = new Point3 ((int)gridSize.x, (int)gridSize.y, (int)gridSize.z);
 
+		mFaceDownDirections = CreateFaceDownDirections ();
+
 		int numBoardObjectTypes = Enum.GetValues (typeof(BoardObject.BOType)).Length-1;
 		int numBoardObjectColours = Enum.GetValues (typeof(BoardObject.BOColour)).Length;
 
@@ -169,6 +171,23 @@ public class Board : MonoBehaviour
 			}
 		}
 
+		//BoardFace.Z_Y
+		x = mGridExtents.X-1;
+		for (y = 0; y < mGridExtents.Y; ++y)
+		{
+			for (z = 0; z < mGridExtents.Z; ++z)
+			{
+				var boardObject = mBoardObjects [x, y, z];
+				var startingPosition = new Point3 (boardObject.GridPositionModel);
+				var lastPosition = new Point3(startingPosition);
+				var dropPosition = DropBoardObjectFrom (startingPosition, BoardFace.Z_Y);
+				while (dropPosition != lastPosition)
+				{
+					dropPosition = DropBoardObjectFrom (startingPosition, BoardFace.Z_Y);
+				}
+			}
+		}
+
 //		foreach (BoardObject boardObject in emptySlots)
 //		{
 //			var columnIndex = GetColumn (boardObject.GridPositionView, mLastSwapDirection);
@@ -227,7 +246,7 @@ public class Board : MonoBehaviour
 			var belowPosition = startPoint + downDirection;
 			if (IsValidGridPosition(belowPosition) && IsGridPositionEmpty (belowPosition))
 			{
-				
+				return belowPosition;
 			}
 		}
 
