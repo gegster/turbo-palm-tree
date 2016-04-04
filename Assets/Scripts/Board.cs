@@ -16,25 +16,22 @@ public class Board : MonoBehaviour
 	{
 		IDLE,
 		ANIMATING,
-		CHECKING}
-
-	;
+		CHECKING
+	};
 
 	public enum BoardFace
 	{
 		X_Y,
 		Z_Y,
-		Z_NX}
-
-	;
+		Z_NX
+	};
 
 	public enum BoardAxis
 	{
 		X,
 		Y,
-		Z}
-
-	;
+		Z
+	};
 
 	public Vector3 gridSize;
 
@@ -42,6 +39,7 @@ public class Board : MonoBehaviour
 	public int levelId;
 	public float swapTime;
 	public float removeTime;
+	public float moveTimePerGridTile;
 
 	private BoardObject[,,] mBoardObjects;
 	private BoardState mState;
@@ -221,14 +219,17 @@ public class Board : MonoBehaviour
 		}
 	}
 
-	private Point3 GetDropPosition(BoardObject boardObject, BoardFace face)
+	private Point3 GetDropPosition(BoardObject boardObject, BoardFace face, ref List<Point3> moves)
 	{
 		var startingPosition = new Point3 (boardObject.GridPositionModel);
 		var lastPosition = new Point3 (startingPosition);
-		var dropPosition = DropBoardObjectFrom (startingPosition, face);
+		var delta = new Point3 ();
+		var dropPosition = DropBoardObjectFrom (startingPosition, face, ref delta);
 		while (dropPosition != lastPosition)
 		{
-			dropPosition = DropBoardObjectFrom (startingPosition, face);
+			moves.Add (delta);
+			lastPosition = dropPosition;
+			dropPosition = DropBoardObjectFrom (lastPosition, face, ref delta);
 		}
 
 		return dropPosition;
@@ -237,21 +238,90 @@ public class Board : MonoBehaviour
 	IEnumerator DropBoardObjectsCoroutine(List<BoardObject> emptySlots, OnBoardObjectsDropped finishedCallback)
 	{
 		// update model positions first
+		var boardObjectMoves = new List<BoardObjectMove>();
 		var boardFaces = new BoardFace[] { BoardFace.X_Y, BoardFace.Z_Y, BoardFace.Z_NX }; 
 		foreach (BoardFace face in boardFaces)
 		{
 			var boardObjects = GetFaceBoardObjects (face);
 			foreach (var boardObject in boardObjects)
 			{
-				var dropPosition = GetDropPosition (boardObject, face);
-				if (dropPosition != boardObject.GridPositionModel)
+				if (boardObject.BoardObjectType != BoardObject.BOType.EMPTY) 
 				{
-					boardObject.GridPositionModel = dropPosition;
+					var moves = new List<Point3> ();
+					var dropPosition = GetDropPosition (boardObject, face, ref moves);
+					if (dropPosition != boardObject.GridPositionModel) {
+						var temp = mBoardObjects [dropPosition.X, dropPosition.Y, dropPosition.Z];
+						mBoardObjects [dropPosition.X, dropPosition.Y, dropPosition.Z] = boardObject;
+						mBoardObjects [boardObject.GridPositionModel.X, boardObject.GridPositionModel.Y, boardObject.GridPositionModel.Z] = temp; 
+
+						boardObjectMoves.Add (new BoardObjectMove (boardObject, moves));
+						boardObject.GridPositionModel = dropPosition;
+					}
 				}
 			}
 		}
 
 		yield return new WaitForEndOfFrame ();
+
+		var maxMoves = 0;
+		Vector3[] startPositions = new Vector3[boardObjectMoves.Count];
+		for(int i = 0; i < boardObjectMoves.Count; ++i) 
+		{ 
+			var boardObjectMove = boardObjectMoves [i];
+			if(boardObjectMove.Moves.Count > maxMoves)
+			{
+				maxMoves = boardObjectMove.Moves.Count;
+			}
+		}
+			
+		var targetPosition = new Vector3 ();
+
+		for( int j = 0; j < maxMoves; ++j)
+		{
+			for(int i = 0; i < boardObjectMoves.Count; ++i) 
+			{ 
+				var boardObjectMove = boardObjectMoves [i];
+				startPositions[i] = boardObjectMove.BoardObject.transform.position;
+				if(boardObjectMove.Moves.Count > maxMoves)
+				{
+					maxMoves = boardObjectMove.Moves.Count;
+				}
+			}
+
+			var startTime = Time.time;
+			var endTime = startTime + moveTimePerGridTile;
+			while (Time.time <= endTime)
+			{
+				for (int i = 0; i < boardObjectMoves.Count; ++i)
+				{
+					var move = boardObjectMoves [i];
+					if (move.Moves.Count <= j + 1) 
+					{
+						var boardObject = move.BoardObject;
+						var t = (Time.time - startTime) / moveTimePerGridTile;
+						Debug.Log (t);
+						t = Mathf.Clamp01 (t);
+
+						targetPosition.Set (boardObject.GridPositionView.X + move.Moves[j].X, boardObject.GridPositionView.Y + move.Moves[j].Y, boardObject.GridPositionView.Z + move.Moves[j].Z);
+						boardObject.transform.position = Vector3.Lerp (startPositions [i], targetPosition, t);
+					}
+				}
+
+				yield return new WaitForEndOfFrame ();
+			}
+
+			for (int i = 0; i < boardObjectMoves.Count; ++i)
+			{
+				var move = boardObjectMoves [i];
+				if (boardObjectMoves [i].Moves.Count <= j + 1) 
+				{
+					var boardObject = boardObjectMoves [i].BoardObject;
+					targetPosition.Set (boardObject.GridPositionView.X + move.Moves[j].X, boardObject.GridPositionView.Y + move.Moves[j].Y, boardObject.GridPositionView.Z + move.Moves[j].Z);
+					boardObject.transform.position = targetPosition;
+					boardObject.GridPositionView.Set((int)targetPosition.x, (int)targetPosition.y, (int)targetPosition.z);
+				}
+			}
+		}
 
 		if (finishedCallback != null)
 		{
@@ -259,18 +329,18 @@ public class Board : MonoBehaviour
 		}
 	}
 
-	private Point3 DropBoardObjectFrom(Point3 startPoint, BoardFace face)
+	private Point3 DropBoardObjectFrom(Point3 startPoint, BoardFace face, ref Point3 delta)
 	{
-		Point3 newPosition = TryDroppingBoardObjectDownFace (startPoint, face);
+		Point3 newPosition = TryDroppingBoardObjectDownFace (startPoint, face, ref delta);
 		if (newPosition == startPoint)
 		{
-			newPosition = TryDroppingBoardObjectDownAdjacentFace (newPosition, face);
+			newPosition = TryDroppingBoardObjectDownAdjacentFace (newPosition, face, ref delta);
 		}
 
 		return newPosition;
 	}
 
-	private Point3 TryDroppingBoardObjectDownFace(Point3 startPoint, BoardFace face)
+	private Point3 TryDroppingBoardObjectDownFace(Point3 startPoint, BoardFace face, ref Point3 delta)
 	{
 		var downDirections = mFaceDownDirections [face];
 
@@ -279,6 +349,7 @@ public class Board : MonoBehaviour
 			var belowPosition = startPoint + downDirection;
 			if (IsValidGridPosition (belowPosition) && IsGridPositionEmpty (belowPosition))
 			{
+				delta = downDirection;
 				return belowPosition;
 			}
 		}
@@ -293,11 +364,17 @@ public class Board : MonoBehaviour
 
 	private bool IsGridPositionEmpty(Point3 gridPosition)
 	{
+		Debug.Log (gridPosition.X + " " + gridPosition.Y + " " + gridPosition.Z);
 		BoardObject slot = mBoardObjects [gridPosition.X, gridPosition.Y, gridPosition.Z];
+		if (slot == null) 
+		{
+			int i = 0;
+			++i;
+		}
 		return slot.BoardObjectType == BoardObject.BOType.EMPTY;
 	}
 
-	private Point3 TryDroppingBoardObjectDownAdjacentFace(Point3 startPoint, BoardFace face)
+	private Point3 TryDroppingBoardObjectDownAdjacentFace(Point3 startPoint, BoardFace face, ref Point3 delta)
 	{
 		return startPoint;
 	}
@@ -329,7 +406,7 @@ public class Board : MonoBehaviour
 
 			for (int i = 0; i < matchedBoardObjects.Count; ++i)
 			{
-				startScales [i] = matchedBoardObjects [i].transform.localScale;
+				//startScales [i] = matchedBoardObjects [i].transform.localScale;
 				matchedBoardObjects [i].transform.localScale = Vector3.Lerp (startScales [i], targetScale, t);
 			}
 
