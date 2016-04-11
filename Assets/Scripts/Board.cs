@@ -15,7 +15,8 @@ public class Board : MonoBehaviour
 	public enum BoardState
 	{
 		IDLE,
-		ANIMATING,
+		SWAPPING,
+		DROPPING,
 		CHECKING
 	};
 
@@ -100,7 +101,7 @@ public class Board : MonoBehaviour
 				if (boardObject.IsAdjacent (mSwapCandidates [0]))
 				{
 					mSwapCandidates.Add (boardObject);
-					SetState (BoardState.ANIMATING);
+					SetState (BoardState.SWAPPING);
 				}
 				else
 				{
@@ -121,8 +122,8 @@ public class Board : MonoBehaviour
 		{
 		case BoardState.IDLE:
 			break;
-		case BoardState.ANIMATING:
-			UpdateAnimatingState ();
+		case BoardState.SWAPPING:
+			UpdateSwappingState ();
 			break;
 		case BoardState.CHECKING:
 			UpdateCheckingState ();
@@ -130,7 +131,7 @@ public class Board : MonoBehaviour
 		}
 	}
 
-	private void UpdateAnimatingState()
+	private void UpdateSwappingState()
 	{
 		if (mSwapCandidates.Count >= 2)
 		{
@@ -147,9 +148,19 @@ public class Board : MonoBehaviour
 
 		if (emptySlots.Count > 0)
 		{
+			SetState (BoardState.DROPPING);
 			StartCoroutine (DropBoardObjectsCoroutine (emptySlots, OnEmptySlotsFilled));
 		}
 		else
+		{
+			SetState (BoardState.IDLE);
+		}
+	}
+
+	private void UpdateDroppingState()
+	{
+		var emptySlots = BoardUtils.GetEmptySlots (mBoardObjects);
+		if (emptySlots.Count == 0)
 		{
 			SetState (BoardState.IDLE);
 		}
@@ -237,6 +248,7 @@ public class Board : MonoBehaviour
 
 	IEnumerator DropBoardObjectsCoroutine(List<BoardObject> emptySlots, OnBoardObjectsDropped finishedCallback)
 	{
+		Debug.Log ("DropBoardObjectsCoroutine called");
 		// update model positions first
 		var boardObjectMoves = new List<BoardObjectMove>();
 		var boardFaces = new BoardFace[] { BoardFace.X_Y, BoardFace.Z_Y, BoardFace.Z_NX }; 
@@ -265,6 +277,7 @@ public class Board : MonoBehaviour
 
 		var maxMoves = 0;
 		Vector3[] startPositions = new Vector3[boardObjectMoves.Count];
+		Vector3[] targetPositions = new Vector3[boardObjectMoves.Count];
 		for(int i = 0; i < boardObjectMoves.Count; ++i) 
 		{ 
 			var boardObjectMove = boardObjectMoves [i];
@@ -273,52 +286,57 @@ public class Board : MonoBehaviour
 				maxMoves = boardObjectMove.Moves.Count;
 			}
 		}
-			
-		var targetPosition = new Vector3 ();
 
+		Debug.Log ("About to process moves");
+			
 		for( int j = 0; j < maxMoves; ++j)
 		{
+			Debug.Log ("Move " + j);
 			for(int i = 0; i < boardObjectMoves.Count; ++i) 
 			{ 
-				var boardObjectMove = boardObjectMoves [i];
-				startPositions[i] = boardObjectMove.BoardObject.transform.position;
-				if(boardObjectMove.Moves.Count > maxMoves)
+				var move = boardObjectMoves [i];
+				var boardObject = move.BoardObject;
+				startPositions[i] = boardObjectMoves [i].BoardObject.transform.position;
+				if (j < move.Moves.Count)
 				{
-					maxMoves = boardObjectMove.Moves.Count;
+					targetPositions [i].Set (boardObject.GridPositionView.X + move.Moves [j].X, boardObject.GridPositionView.Y + move.Moves [j].Y, boardObject.GridPositionView.Z + move.Moves [j].Z);
 				}
+				Debug.Log (startPositions [i]);
+				Debug.Log (targetPositions [i]);
 			}
+
+			Debug.Log ("Set start and target positions");
 
 			var startTime = Time.time;
 			var endTime = startTime + moveTimePerGridTile;
 			while (Time.time <= endTime)
 			{
+				var t = (Time.time - startTime) / moveTimePerGridTile;
+				t = Mathf.Clamp01 (t);
+
 				for (int i = 0; i < boardObjectMoves.Count; ++i)
 				{
 					var move = boardObjectMoves [i];
-					if (move.Moves.Count <= j + 1) 
+					if (j < move.Moves.Count) 
 					{
-						var boardObject = move.BoardObject;
-						var t = (Time.time - startTime) / moveTimePerGridTile;
-						Debug.Log (t);
-						t = Mathf.Clamp01 (t);
-
-						targetPosition.Set (boardObject.GridPositionView.X + move.Moves[j].X, boardObject.GridPositionView.Y + move.Moves[j].Y, boardObject.GridPositionView.Z + move.Moves[j].Z);
-						boardObject.transform.position = Vector3.Lerp (startPositions [i], targetPosition, t);
+						move.BoardObject.transform.position = Vector3.Lerp (startPositions [i], targetPositions[i], t);
 					}
 				}
 
 				yield return new WaitForEndOfFrame ();
 			}
 
+			Debug.Log ("Finished Animating move " + j);
+
 			for (int i = 0; i < boardObjectMoves.Count; ++i)
 			{
 				var move = boardObjectMoves [i];
-				if (boardObjectMoves [i].Moves.Count <= j + 1) 
+				if (j < move.Moves.Count) 
 				{
 					var boardObject = boardObjectMoves [i].BoardObject;
-					targetPosition.Set (boardObject.GridPositionView.X + move.Moves[j].X, boardObject.GridPositionView.Y + move.Moves[j].Y, boardObject.GridPositionView.Z + move.Moves[j].Z);
-					boardObject.transform.position = targetPosition;
-					boardObject.GridPositionView.Set((int)targetPosition.x, (int)targetPosition.y, (int)targetPosition.z);
+
+					boardObject.transform.position = targetPositions[i];
+					boardObject.GridPositionView.Set((int)targetPositions[i].x, (int)targetPositions[i].y, (int)targetPositions[i].z);
 				}
 			}
 		}
@@ -364,7 +382,7 @@ public class Board : MonoBehaviour
 
 	private bool IsGridPositionEmpty(Point3 gridPosition)
 	{
-		Debug.Log (gridPosition.X + " " + gridPosition.Y + " " + gridPosition.Z);
+		//Debug.Log (gridPosition.X + " " + gridPosition.Y + " " + gridPosition.Z);
 		BoardObject slot = mBoardObjects [gridPosition.X, gridPosition.Y, gridPosition.Z];
 		if (slot == null) 
 		{
