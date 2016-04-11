@@ -77,7 +77,7 @@ public class Board : MonoBehaviour
 		Dictionary<BoardFace, List<Point3>> faceDownDirections = new Dictionary<BoardFace, List<Point3>> ();
 		faceDownDirections.Add (BoardFace.X_Y, new List<Point3> { Point3.NEG_Y });
 		faceDownDirections.Add (BoardFace.Z_Y, new List<Point3> { Point3.NEG_Y });
-		faceDownDirections.Add (BoardFace.Z_NX, new List<Point3> { Point3.NEG_Z, Point3.NEG_X });
+		faceDownDirections.Add (BoardFace.Z_NX, new List<Point3> { Point3.NEG_Z, Point3.POS_X });
 	
 		return faceDownDirections;
 	}
