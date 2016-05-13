@@ -49,7 +49,7 @@ public class Board : MonoBehaviour
 	private List<BoardObject> mSwapCandidates = new List<BoardObject> ();
 	private List<Match<BoardObject>> mValidMathes = new List<Match<BoardObject>> ();
 	private Point3 mLastSwapDirection;
-	private Dictionary<BoardFace, List<Point3>> mFaceDownDirections;
+	private BoardFace mLastVerticalSwapOrMatchFace = BoardFace.X_Y;
 
 	// Use this for initialization
 	void Start()
@@ -57,8 +57,6 @@ public class Board : MonoBehaviour
 		UnityEngine.Random.seed = levelId;
 
 		mGridExtents = new Point3 ((int)gridSize.x, (int)gridSize.y, (int)gridSize.z);
-
-		mFaceDownDirections = CreateFaceDownDirections ();
 
 		int numBoardObjectTypes = Enum.GetValues (typeof(BoardObject.BOType)).Length - 1;
 		int numBoardObjectColours = Enum.GetValues (typeof(BoardObject.BOColour)).Length;
@@ -72,14 +70,15 @@ public class Board : MonoBehaviour
 		mState = BoardState.IDLE;
 	}
 
-	private Dictionary<BoardFace, List<Point3>> CreateFaceDownDirections()
+	private Point3 GetFaceDownDirection(BoardFace boardObjectFace)
 	{
-		Dictionary<BoardFace, List<Point3>> faceDownDirections = new Dictionary<BoardFace, List<Point3>> ();
-		faceDownDirections.Add (BoardFace.X_Y, new List<Point3> { Point3.NEG_Y });
-		faceDownDirections.Add (BoardFace.Z_Y, new List<Point3> { Point3.NEG_Y });
-		faceDownDirections.Add (BoardFace.Z_NX, new List<Point3> { Point3.NEG_Z, Point3.POS_X });
-	
-		return faceDownDirections;
+		switch (boardObjectFace)
+		{
+		default:
+			return Point3.NEG_Y;
+		case BoardFace.Z_NX:
+			return mLastVerticalSwapOrMatchFace == BoardFace.X_Y ? Point3.NEG_Z : Point3.POS_X;
+		}
 	}
 
 	private void SetState(BoardState newState)
@@ -131,10 +130,41 @@ public class Board : MonoBehaviour
 		}
 	}
 
+	private void CheckAndSetLastVerticalSwapOrMatchFace( List<BoardObject> boardObjects)
+	{
+		var predominantFaces = GetPredominantFaceFromBoardObjects (boardObjects);
+		if (predominantFaces.Count == 1)
+		{
+			if (predominantFaces.Contains (BoardFace.X_Y))
+			{
+				mLastVerticalSwapOrMatchFace = BoardFace.X_Y;
+			}
+			else if (predominantFaces.Contains (BoardFace.Z_Y))
+			{
+				mLastVerticalSwapOrMatchFace = BoardFace.Z_Y;
+			}
+		}
+		else if (predominantFaces.Count == 2)
+		{
+			if (predominantFaces.Contains (BoardFace.Z_NX))
+			{
+				if (predominantFaces.Contains (BoardFace.X_Y))
+				{
+					mLastVerticalSwapOrMatchFace = BoardFace.X_Y;
+				}
+				else if (predominantFaces.Contains (BoardFace.Z_Y))
+				{
+					mLastVerticalSwapOrMatchFace = BoardFace.Z_Y;
+				}
+			}
+		}
+	}
+
 	private void UpdateSwappingState()
 	{
 		if (mSwapCandidates.Count >= 2)
 		{
+			CheckAndSetLastVerticalSwapOrMatchFace (mSwapCandidates);
 			SwapBoardObjectsInModel (mSwapCandidates [0], mSwapCandidates [1]);
 			mLastSwapDirection = mSwapCandidates [1].GridPositionModel - mSwapCandidates [0].GridPositionModel;
 			StartCoroutine (SwapBoardObjectsInViewCoroutine (mSwapCandidates [0], mSwapCandidates [1], OnBoardObjectsSwapped));
@@ -226,21 +256,28 @@ public class Board : MonoBehaviour
 		case BoardFace.Z_Y:
 			return mBoardObjects [mGridExtents.X - 1, row, column];
 		case BoardFace.Z_NX:
-			return mBoardObjects [row, mGridExtents.Y - 1, column];
+			if (mLastVerticalSwapOrMatchFace == BoardFace.X_Y)
+			{
+				return mBoardObjects [column, mGridExtents.Y - 1, row];
+			}
+			else
+			{
+				return mBoardObjects [(mGridExtents.X-1)-row, mGridExtents.Y - 1, column];
+			}
 		}
 	}
 
-	private Point3 GetDropPosition(BoardObject boardObject, BoardFace face, ref List<Point3> moves)
+	private Point3 GetDropPosition(BoardObject boardObject, ref BoardFace face, ref List<Point3> moves)
 	{
 		var startingPosition = new Point3 (boardObject.GridPositionModel);
 		var lastPosition = new Point3 (startingPosition);
 		var delta = new Point3 ();
-		var dropPosition = DropBoardObjectFrom (startingPosition, face, ref delta);
+		var dropPosition = DropBoardObjectFrom (startingPosition, ref face, ref delta);
 		while (dropPosition != lastPosition)
 		{
 			moves.Add (delta);
 			lastPosition = dropPosition;
-			dropPosition = DropBoardObjectFrom (lastPosition, face, ref delta);
+			dropPosition = DropBoardObjectFrom (lastPosition, ref face, ref delta);
 		}
 
 		return dropPosition;
@@ -260,7 +297,8 @@ public class Board : MonoBehaviour
 				if (boardObject.BoardObjectType != BoardObject.BOType.EMPTY) 
 				{
 					var moves = new List<Point3> ();
-					var dropPosition = GetDropPosition (boardObject, face, ref moves);
+					var startingFace = face;
+					var dropPosition = GetDropPosition (boardObject, ref startingFace, ref moves);
 					if (dropPosition != boardObject.GridPositionModel) {
 						var temp = mBoardObjects [dropPosition.X, dropPosition.Y, dropPosition.Z];
 						mBoardObjects [dropPosition.X, dropPosition.Y, dropPosition.Z] = boardObject;
@@ -301,8 +339,6 @@ public class Board : MonoBehaviour
 				{
 					targetPositions [i].Set (boardObject.GridPositionView.X + move.Moves [j].X, boardObject.GridPositionView.Y + move.Moves [j].Y, boardObject.GridPositionView.Z + move.Moves [j].Z);
 				}
-				Debug.Log (startPositions [i]);
-				Debug.Log (targetPositions [i]);
 			}
 
 			Debug.Log ("Set start and target positions");
@@ -347,12 +383,20 @@ public class Board : MonoBehaviour
 		}
 	}
 
-	private Point3 DropBoardObjectFrom(Point3 startPoint, BoardFace face, ref Point3 delta)
+	private bool IsSharedTopEdge(Point3 position)
+	{
+		return ((position.Y == (mGridExtents.Y - 1)) && (position.X == (mGridExtents.X-1) || position.Z == 0));
+	}
+
+	private Point3 DropBoardObjectFrom(Point3 startPoint, ref BoardFace face, ref Point3 delta)
 	{
 		Point3 newPosition = TryDroppingBoardObjectDownFace (startPoint, face, ref delta);
 		if (newPosition == startPoint)
 		{
-			newPosition = TryDroppingBoardObjectDownAdjacentFace (newPosition, face, ref delta);
+			if (IsSharedTopEdge (newPosition))
+			{
+				newPosition = TryDroppingBoardObjectDownAdjacentFace (newPosition, ref face, ref delta);
+			}
 		}
 
 		return newPosition;
@@ -360,16 +404,13 @@ public class Board : MonoBehaviour
 
 	private Point3 TryDroppingBoardObjectDownFace(Point3 startPoint, BoardFace face, ref Point3 delta)
 	{
-		var downDirections = mFaceDownDirections [face];
+		var downDirection = GetFaceDownDirection (face);
 
-		foreach (Point3 downDirection in downDirections)
+		var belowPosition = startPoint + downDirection;
+		if (IsValidGridPosition (belowPosition) && IsGridPositionEmpty (belowPosition))
 		{
-			var belowPosition = startPoint + downDirection;
-			if (IsValidGridPosition (belowPosition) && IsGridPositionEmpty (belowPosition))
-			{
-				delta = downDirection;
-				return belowPosition;
-			}
+			delta = downDirection;
+			return belowPosition;
 		}
 
 		return startPoint;
@@ -392,8 +433,21 @@ public class Board : MonoBehaviour
 		return slot.BoardObjectType == BoardObject.BOType.EMPTY;
 	}
 
-	private Point3 TryDroppingBoardObjectDownAdjacentFace(Point3 startPoint, BoardFace face, ref Point3 delta)
+	private Point3 TryDroppingBoardObjectDownAdjacentFace(Point3 startPoint, ref BoardFace face, ref Point3 delta)
 	{
+		if(face == BoardFace.Z_NX)
+		{
+			var faces = GetBoardObjectFaces (mBoardObjects [startPoint.X, startPoint.Y, startPoint.Z]);
+			foreach (var newFace in faces)
+			{
+				if (newFace != face)
+				{
+					face = newFace;
+					return TryDroppingBoardObjectDownFace (startPoint, face, ref delta);
+				}
+			}
+		}
+
 		return startPoint;
 	}
 
@@ -516,6 +570,7 @@ public class Board : MonoBehaviour
 		{
 			foreach (var validMatch in mValidMathes)
 			{
+				CheckAndSetLastVerticalSwapOrMatchFace (validMatch.GetMatchItemsAsFlatList ());
 				StartCoroutine (RemoveMatchedBoardObjectsInViewCoroutine (validMatch, OnMatchedBoardObjectsRemoved));
 			}
 		}
@@ -524,5 +579,49 @@ public class Board : MonoBehaviour
 			//StartCoroutine(SwapBoardObjectsCoroutine(a, b, OnBoardObjectsSwappedFailed));
 			SetState (BoardState.CHECKING);
 		}
+	}
+
+	List<BoardFace> GetPredominantFaceFromBoardObjects(List<BoardObject> boardObjects)
+	{
+		var faces = new List<BoardFace> ();
+		foreach (BoardObject boardObject in boardObjects)
+		{
+			faces.AddRange (GetBoardObjectFaces (boardObject));
+		}
+
+		var boardFaces = new BoardFace[] { BoardFace.X_Y, BoardFace.Z_Y, BoardFace.Z_NX };
+		var faceCounts = new int[boardFaces.Length];
+		for(int i = 0; i < boardFaces.Length; ++i)
+		{
+			faceCounts[i] = faces.Count (element => element == boardFaces[i]);
+		}
+
+		var maxCount = faceCounts.Max ();
+
+		var predominantFaces = new List<BoardFace> ();
+		for (int i = 0; i < faceCounts.Length; ++i)
+		{
+			if (faceCounts[i] == maxCount)
+			{
+				predominantFaces.Add (boardFaces [i]);
+			}
+		}
+		return predominantFaces;
+	}
+
+	List<BoardFace> GetBoardObjectFaces(BoardObject boardObject)
+	{
+		List<BoardFace> faces = new List<BoardFace> ();
+		var boardFaces = new BoardFace[] { BoardFace.X_Y, BoardFace.Z_Y, BoardFace.Z_NX }; 
+		foreach (BoardFace face in boardFaces)
+		{
+			var faceBoardObjects = GetFaceBoardObjects (face);
+			if(faceBoardObjects.Find(element => element.GridPositionModel == boardObject.GridPositionModel) != null)
+			{
+				faces.Add (face);
+			}
+		}
+
+		return faces;
 	}
 }
